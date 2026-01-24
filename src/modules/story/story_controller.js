@@ -6,20 +6,36 @@ import { sendResponse } from "../../utils/response.js";
 export const uploadStory = async (req, res) => {
     try {
         if (!req.files || req.files.length === 0) {
-            return sendResponse(res, 400, false, "No media file uploaded");
+            return sendResponse(res, 400, false, "No files uploaded");
         }
 
-        const file = req.files[0]; // Single file per story upload usually
-        const mediaUrl = `/uploads/${file.filename}`;
-        const mediaType = file.mimetype.startsWith('video') ? 'video' : 'image';
+        const { privacy, allowedUsers } = req.body;
+        let parsedAllowedUsers = [];
+        if (allowedUsers) {
+            try {
+                parsedAllowedUsers = typeof allowedUsers === 'string' ? JSON.parse(allowedUsers) : allowedUsers;
+            } catch (e) {
+                console.error("Failed to parse allowedUsers:", e);
+                parsedAllowedUsers = [];
+            }
+        }
 
-        const story = await Story.create({
-            user: req.user.id,
-            mediaUrl,
-            mediaType
-        });
+        const stories = [];
+        for (const file of req.files) {
+            const mediaUrl = `/uploads/${file.filename}`;
+            const mediaType = file.mimetype.startsWith('video') ? 'video' : 'image';
 
-        return sendResponse(res, 201, true, "Story uploaded successfully", story);
+            const story = await Story.create({
+                user: req.user.id,
+                mediaUrl,
+                mediaType,
+                privacy: privacy || 'everyone',
+                allowedUsers: parsedAllowedUsers
+            });
+            stories.push(story);
+        }
+
+        return sendResponse(res, 201, true, "Stories uploaded successfully", stories);
     } catch (err) {
         return sendResponse(res, 500, false, err.message);
     }
@@ -31,24 +47,27 @@ export const getStories = async (req, res) => {
         const currentUserId = req.user.id;
         const now = new Date();
 
-        // Fetch all active stories with user details
-        // We populate user to check privacy settings
+        // Fetch all active stories
         const stories = await Story.find({ expiresAt: { $gt: now } })
             .sort({ createdAt: -1 })
-            .populate("user", "username email avatarUrl storyPrivacy storyAllowedUsers")
+            .populate("user", "username email avatarUrl")
+            .populate("views.user", "username avatarUrl")
             .lean();
 
-        // Filter stories based on privacy
+        // Filter stories based on per-story privacy
         const visibleStories = stories.filter(story => {
-            // 1. Own story always visible
-            if (String(story.user._id) === String(currentUserId)) return true;
+            const storyUserId = String(story.user._id);
+            const currentUserIdStr = String(currentUserId);
 
-            // 2. Check author's privacy setting
-            const author = story.user;
-            if (author.storyPrivacy === 'everyone') return true;
-            if (author.storyPrivacy === 'selected') {
-                // Check if current user is in allowed list
-                return author.storyAllowedUsers.map(id => String(id)).includes(String(currentUserId));
+            // 1. Own story always visible
+            if (storyUserId === currentUserIdStr) return true;
+
+            // 2. Check story's privacy setting
+            const privacy = story.privacy || 'everyone';
+            if (privacy === 'everyone') return true;
+
+            if (privacy === 'selected') {
+                return (story.allowedUsers || []).some(id => String(id) === currentUserIdStr);
             }
             return false;
         });

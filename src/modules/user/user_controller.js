@@ -34,7 +34,17 @@ export const login = async (req, res) => {
     const token = signToken({ id: user._id });
 
     return sendResponse(res, 200, true, "Login successful", {
-      user: { id: user._id, username: user.username, email: user.email, avatarUrl: user.avatarUrl, about: user.about },
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        avatarUrl: user.avatarUrl,
+        about: user.about,
+        storyPrivacy: user.storyPrivacy,
+        storyAllowedUsers: user.storyAllowedUsers,
+        statusPrivacy: user.statusPrivacy,
+        statusAllowedUsers: user.statusAllowedUsers
+      },
       token
     });
   } catch (err) {
@@ -57,13 +67,15 @@ export const getAllUsers = async (req, res) => {
 export const updateProfile = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { about, avatarUrl, storyPrivacy, storyAllowedUsers } = req.body;
+    const { about, avatarUrl, storyPrivacy, storyAllowedUsers, statusPrivacy, statusAllowedUsers } = req.body;
 
     const updates = {};
     if (about !== undefined) updates.about = about;
     if (avatarUrl !== undefined) updates.avatarUrl = avatarUrl;
     if (storyPrivacy !== undefined) updates.storyPrivacy = storyPrivacy;
     if (storyAllowedUsers !== undefined) updates.storyAllowedUsers = storyAllowedUsers;
+    if (statusPrivacy !== undefined) updates.statusPrivacy = statusPrivacy;
+    if (statusAllowedUsers !== undefined) updates.statusAllowedUsers = statusAllowedUsers;
 
     const user = await userService.updateUserProfile(userId, updates);
     return sendResponse(res, 200, true, "Profile updated successfully", {
@@ -74,7 +86,9 @@ export const updateProfile = async (req, res) => {
         avatarUrl: user.avatarUrl,
         about: user.about,
         storyPrivacy: user.storyPrivacy,
-        storyAllowedUsers: user.storyAllowedUsers
+        storyAllowedUsers: user.storyAllowedUsers,
+        statusPrivacy: user.statusPrivacy,
+        statusAllowedUsers: user.statusAllowedUsers
       }
     });
   } catch (err) {

@@ -8,6 +8,8 @@ const userSchema = new mongoose.Schema({
   about: { type: String, default: "" },
   storyPrivacy: { type: String, enum: ['everyone', 'selected'], default: 'everyone' },
   storyAllowedUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+  statusPrivacy: { type: String, enum: ['everyone', 'selected', 'nobody'], default: 'everyone' },
+  statusAllowedUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
 }, { timestamps: true });
 
 const User = mongoose.model("User", userSchema);

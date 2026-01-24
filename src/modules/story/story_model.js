@@ -4,6 +4,8 @@ const storySchema = new mongoose.Schema({
     user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
     mediaUrl: { type: String, required: true },
     mediaType: { type: String, enum: ['image', 'video'], default: 'image' },
+    privacy: { type: String, enum: ['everyone', 'selected'], default: 'everyone' },
+    allowedUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
     views: [{
         user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
         viewedAt: { type: Date, default: Date.now }

@@ -1,5 +1,6 @@
 import Message from "./message_model.js";
 import Chat from "./chat_model.js";
+import User from "../user/user_model.js";
 import mongoose from "mongoose";
 import crypto from "crypto";
 
@@ -31,6 +32,8 @@ const decrypt = (text) => {
   }
 };
 
+const getConversationKey = (type, targetId) => `${type}:${targetId}`;
+
 export const saveMessage = async ({ from, to, chat, room, text, meta }) => {
   const encryptedText = encrypt(text);
   const msgData = { from, text: encryptedText, meta };
@@ -43,6 +46,16 @@ export const saveMessage = async ({ from, to, chat, room, text, meta }) => {
   // Update lastMessage in Chat if it's a group chat
   if (chat) {
     await Chat.findByIdAndUpdate(chat, { lastMessage: msg._id });
+
+    // If a new group message arrives, show that group again for participants.
+    const chatDoc = await Chat.findById(chat).select("participants").lean();
+    if (chatDoc?.participants?.length) {
+      const hiddenKey = getConversationKey("group", String(chat));
+      await User.updateMany(
+        { _id: { $in: chatDoc.participants } },
+        { $pull: { hiddenConversations: hiddenKey } }
+      );
+    }
   }
 
   return { ...msg.toObject(), text: text }; // Return decrypted for immediate UI use
@@ -99,6 +112,9 @@ export const createGroupChat = async ({ name, participants, admin }) => {
 
 export const getConversations = async (userId) => {
   const userObjectId = new mongoose.Types.ObjectId(String(userId));
+  const currentUser = await User.findById(userId).select("pinnedConversations hiddenConversations").lean();
+  const pinnedSet = new Set(currentUser?.pinnedConversations || []);
+  const hiddenSet = new Set(currentUser?.hiddenConversations || []);
 
   // 1. Get 1:1 conversations from Messages
   const rawPrivateConversations = await Message.aggregate([
@@ -137,7 +153,7 @@ export const getConversations = async (userId) => {
     },
     {
       $project: {
-        _id: 0,
+        _id: "$user._id",
         type: { $literal: "private" },
         user: { _id: 1, username: 1, email: 1, avatarUrl: 1, about: 1 },
         lastMessage: {
@@ -177,7 +193,9 @@ export const getConversations = async (userId) => {
     latestVisibleGroupMessages.map(item => [String(item._id), item.lastMessage])
   );
 
-  const formattedGroups = groupConversations.map(group => ({
+  const formattedGroups = groupConversations
+    .filter((group) => !hiddenSet.has(getConversationKey("group", String(group._id))))
+    .map(group => ({
     type: "group",
     _id: group._id,
     name: group.name,
@@ -186,6 +204,7 @@ export const getConversations = async (userId) => {
     admin: group.admin,
     createdAt: group.createdAt,
     updatedAt: group.updatedAt,
+    isPinned: pinnedSet.has(getConversationKey("group", String(group._id))),
     lastMessage: latestGroupMessageByChatId.get(String(group._id)) ? {
       text: decrypt(latestGroupMessageByChatId.get(String(group._id)).text),
       createdAt: latestGroupMessageByChatId.get(String(group._id)).createdAt,
@@ -197,6 +216,7 @@ export const getConversations = async (userId) => {
   const allConversations = [
     ...rawPrivateConversations.map(conv => ({
       ...conv,
+      isPinned: pinnedSet.has(getConversationKey("private", String(conv.user._id))),
       lastMessage: {
         ...conv.lastMessage,
         text: decrypt(conv.lastMessage.text)
@@ -206,6 +226,10 @@ export const getConversations = async (userId) => {
   ];
 
   return allConversations.sort((a, b) => {
+    if (a.isPinned !== b.isPinned) {
+      return a.isPinned ? -1 : 1;
+    }
+
     const getSortDate = (conv) => {
       if (conv.lastMessage?.createdAt) return new Date(conv.lastMessage.createdAt);
       // For new groups or chats without messages, use the chat's own timestamp
@@ -214,6 +238,92 @@ export const getConversations = async (userId) => {
 
     return getSortDate(b) - getSortDate(a);
   });
+};
+
+export const setConversationPinStatus = async ({ userId, type, targetId, pinned }) => {
+  if (!["private", "group"].includes(type)) {
+    throw new Error("Invalid conversation type");
+  }
+
+  if (!targetId) {
+    throw new Error("targetId is required");
+  }
+
+  if (type === "group") {
+    const chat = await Chat.findById(targetId).lean();
+    if (!chat) throw new Error("Group chat not found");
+    const isParticipant = chat.participants.some((participantId) => String(participantId) === String(userId));
+    if (!isParticipant) throw new Error("You are not a participant of this group");
+  } else {
+    const exists = await User.exists({ _id: targetId });
+    if (!exists) throw new Error("User not found");
+  }
+
+  const conversationKey = getConversationKey(type, String(targetId));
+  const update = pinned
+    ? { $addToSet: { pinnedConversations: conversationKey } }
+    : { $pull: { pinnedConversations: conversationKey } };
+
+  await User.findByIdAndUpdate(userId, update);
+  return { type, targetId, pinned: !!pinned };
+};
+
+export const deleteConversation = async ({ userId, type, targetId }) => {
+  if (!["private", "group"].includes(type)) {
+    throw new Error("Invalid conversation type");
+  }
+
+  if (!targetId) {
+    throw new Error("targetId is required");
+  }
+
+  if (type === "group") {
+    const chat = await Chat.findById(targetId).lean();
+    if (!chat) {
+      throw new Error("Group chat not found");
+    }
+
+    const isParticipant = chat.participants.some((participantId) => String(participantId) === String(userId));
+    if (!isParticipant) {
+      throw new Error("You are not a participant of this group");
+    }
+
+    // Delete for me only: hide existing group messages for this user.
+    await Message.updateMany(
+      { chat: targetId, deletedBy: { $ne: userId } },
+      { $addToSet: { deletedBy: userId } }
+    );
+    const groupKey = getConversationKey("group", String(targetId));
+    await User.findByIdAndUpdate(userId, {
+      $pull: { pinnedConversations: groupKey },
+      $addToSet: { hiddenConversations: groupKey }
+    });
+  } else {
+    if (String(userId) === String(targetId)) {
+      throw new Error("Cannot delete conversation with yourself");
+    }
+
+    // Delete for me only: hide existing private messages for this user.
+    await Message.updateMany(
+      {
+        $or: [
+          { from: userId, to: targetId },
+          { from: targetId, to: userId }
+        ],
+        deletedBy: { $ne: userId }
+      },
+      { $addToSet: { deletedBy: userId } }
+    );
+    const privateKey = getConversationKey("private", String(targetId));
+    await User.findByIdAndUpdate(userId, {
+      $pull: {
+        pinnedConversations: privateKey,
+        hiddenConversations: privateKey
+      }
+    });
+  }
+
+  return { deleted: true, type, targetId };
 };
 
 export const deleteMessage = async (messageId, userId, option) => {
@@ -246,6 +356,8 @@ const messageService = {
   getMessagesBetweenUsers,
   createGroupChat,
   getConversations,
+  setConversationPinStatus,
+  deleteConversation,
   deleteMessage
 };
 export default messageService;

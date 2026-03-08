@@ -13,6 +13,8 @@ const userSchema = new mongoose.Schema({
   storyAllowedUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
   statusPrivacy: { type: String, enum: ['everyone', 'selected', 'nobody'], default: 'everyone' },
   statusAllowedUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+  pinnedConversations: [{ type: String }],
+  hiddenConversations: [{ type: String }],
 }, { timestamps: true });
 
 const User = mongoose.model("User", userSchema);

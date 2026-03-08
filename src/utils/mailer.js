@@ -4,60 +4,50 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 let transporter;
+let transporterReady = false;
 
 const getTransporter = async () => {
     if (transporter) return transporter;
 
-    // Use environment variables if provided
-    if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
-        transporter = nodemailer.createTransport({
-            host: process.env.SMTP_HOST,
-            port: process.env.SMTP_PORT || 587,
-            secure: process.env.SMTP_PORT === '465',
-            auth: {
-                user: process.env.SMTP_USER,
-                pass: process.env.SMTP_PASS
-            }
-        });
-    } else {
-        // Create a test account (Ethereal) dynamically for development
-        console.log("Creating test email account for development...");
-        try {
-            const testAccount = await nodemailer.createTestAccount();
-            transporter = nodemailer.createTransport({
-                host: "smtp.ethereal.email",
-                port: 587,
-                secure: false,
-                auth: {
-                    user: testAccount.user,
-                    pass: testAccount.pass,
-                },
-            });
-            console.log("Ethereal account created: " + testAccount.user);
-        } catch (err) {
-            console.error("Failed to create test email account, using mock transporter.", err);
-            // Fallback mock transporter that just logs to console
-            transporter = {
-                sendMail: async (options) => {
-                    console.log("--- MOCK EMAIL SENT ---");
-                    console.log("To:", options.to);
-                    console.log("Subject:", options.subject);
-                    return { messageId: "mock-id" };
-                }
-            };
+    const emailUser = process.env.EMAIL_USER || process.env.SMTP_USER;
+    const emailPass = process.env.EMAIL_PASS || process.env.SMTP_PASS;
+
+    if (!emailUser || !emailPass) {
+        if (process.env.NODE_ENV === "production") {
+            throw new Error("EMAIL_USER and EMAIL_PASS must be set in production");
         }
+
+        // Development fallback: don't fail local signup if SMTP is not configured.
+        transporter = nodemailer.createTransport({ jsonTransport: true });
+        return transporter;
     }
+
+    transporter = nodemailer.createTransport({
+        service: "gmail",
+        auth: {
+            user: emailUser,
+            pass: emailPass
+        }
+    });
+
+    if (!transporterReady) {
+        await transporter.verify();
+        transporterReady = true;
+    }
+
     return transporter;
 };
 
 export const sendVerificationEmail = async (email, code) => {
-    // ALWAYS log the code to console first! This ensures the user can see it even if email fails.
-    console.log(`\n==============================================`);
-    console.log(`VERIFICATION CODE FOR ${email}: ${code}`);
-    console.log(`==============================================\n`);
+    if (process.env.NODE_ENV !== "production") {
+        console.log(`Verification code for ${email}: ${code}`);
+    }
+
+    const fromEmail = process.env.EMAIL_FROM || process.env.EMAIL_USER || "no-reply@chatflow.com";
+    const fromName = process.env.EMAIL_FROM_NAME || "ChatFlow Support";
 
     const mailOptions = {
-        from: '"ChatFlow Support" <no-reply@chatflow.com>',
+        from: `"${fromName}" <${fromEmail}>`,
         to: email,
         subject: 'Verify your ChatFlow account',
         html: `
@@ -77,14 +67,10 @@ export const sendVerificationEmail = async (email, code) => {
 
     try {
         const mailTransporter = await getTransporter();
-        const info = await mailTransporter.sendMail(mailOptions);
-
-        if (info.messageId !== "mock-id" && !process.env.SMTP_HOST) {
-            console.log("Preview URL: %s", nodemailer.getTestMessageUrl(info));
-        }
+        await mailTransporter.sendMail(mailOptions);
         return true;
     } catch (error) {
-        console.error("Error sending verification email (already logged code to console):", error.message);
+        console.error("Error sending verification email:", error.message);
         return false;
     }
 };

@@ -12,9 +12,18 @@ export const createUser = async ({ username, email, password }) => {
 };
 
 export const findUserByEmail = (email) => User.findOne({ email });
+export const findUserByUsername = (username) => User.findOne({ username });
 export const findUserById = (id) => User.findById(id);
 export const hashPassword = (password) => bcrypt.hash(password, SALT_ROUNDS);
 export const comparePassword = (plain, hashed) => bcrypt.compare(plain, hashed);
+export const createVerifiedUserWithHashedPassword = ({ username, email, passwordHash }) => {
+  return User.create({
+    username,
+    email,
+    password: passwordHash,
+    isVerified: true
+  });
+};
 
 export const getAllUsers = (excludeId) => {
   const query = excludeId ? { _id: { $ne: excludeId } } : {};
@@ -32,10 +41,12 @@ export const deleteUserById = (userId) => {
 const userService = {
   createUser,
   findUserByEmail,
+  findUserByUsername,
   comparePassword,
   getAllUsers,
   findUserById,
-  updateUserProfile
+  updateUserProfile,
+  createVerifiedUserWithHashedPassword
 };
 
 export default userService;

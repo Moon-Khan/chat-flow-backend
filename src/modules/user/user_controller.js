@@ -2,31 +2,53 @@ import * as userService from "./user_service.js";
 import { signToken } from "../../utils/token.js";
 import { sendResponse } from "../../utils/response.js";
 import { sendVerificationEmail } from "../../utils/mailer.js";
+import PendingUser from "./pending_user_model.js";
 
 export const register = async (req, res) => {
   try {
     const { username, email, password } = req.body;
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    const normalizedUsername = String(username || "").trim();
+
+    const existingEmail = await userService.findUserByEmail(normalizedEmail);
+    const existingUsername = await userService.findUserByUsername(normalizedUsername);
+    if (existingEmail || existingUsername) {
+      return sendResponse(res, 400, false, "User already exists");
+    }
+
+    const pendingByUsername = await PendingUser.findOne({ username: normalizedUsername });
+    if (pendingByUsername && pendingByUsername.email !== normalizedEmail) {
+      return sendResponse(res, 400, false, "Username already in use");
+    }
 
     // Generate 6-digit verification code
     const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
     const verificationCodeExpiresAt = new Date(Date.now() + 2 * 60 * 1000); // 2 minutes
 
-    const user = await userService.createUser({
-      username,
-      email,
-      password
-    });
+    const hashedPassword = await userService.hashPassword(password);
 
-    // Save verification info
-    user.verificationCode = verificationCode;
-    user.verificationCodeExpiresAt = verificationCodeExpiresAt;
-    await user.save();
+    // Save pending signup. User account is only created after verify-email.
+    await PendingUser.findOneAndUpdate(
+      { email: normalizedEmail },
+      {
+        username: normalizedUsername,
+        email: normalizedEmail,
+        passwordHash: hashedPassword,
+        verificationCode,
+        verificationCodeExpiresAt,
+        pendingExpiresAt: new Date(Date.now() + 30 * 60 * 1000)
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
 
     // Send email
-    await sendVerificationEmail(email, verificationCode);
+    const emailSent = await sendVerificationEmail(normalizedEmail, verificationCode);
+    if (!emailSent) {
+      return sendResponse(res, 500, false, "Failed to send verification email. Please try again.");
+    }
 
     return sendResponse(res, 201, true, "Verification code sent to email", {
-      email: user.email
+      email: normalizedEmail
     });
   }
   catch (err) {
@@ -78,28 +100,38 @@ export const login = async (req, res) => {
 export const verifyEmail = async (req, res) => {
   try {
     const { email, code } = req.body;
-    const user = await userService.findUserByEmail(email);
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    const existingUser = await userService.findUserByEmail(normalizedEmail);
 
-    if (!user) {
-      return sendResponse(res, 404, false, "User not found");
-    }
-
-    if (user.isVerified) {
+    if (existingUser?.isVerified) {
       return sendResponse(res, 400, false, "Email already verified");
     }
 
-    if (user.verificationCode !== code) {
+    const pendingUser = await PendingUser.findOne({ email: normalizedEmail });
+    if (!pendingUser) {
+      return sendResponse(res, 404, false, "No pending verification found. Please register again.");
+    }
+
+    if (pendingUser.verificationCode !== code) {
       return sendResponse(res, 400, false, "Invalid verification code");
     }
 
-    if (new Date() > user.verificationCodeExpiresAt) {
+    if (new Date() > pendingUser.verificationCodeExpiresAt) {
       return sendResponse(res, 400, false, "Verification code expired");
     }
 
-    user.isVerified = true;
-    user.verificationCode = undefined;
-    user.verificationCodeExpiresAt = undefined;
-    await user.save();
+    const usernameTaken = await userService.findUserByUsername(pendingUser.username);
+    if (usernameTaken) {
+      await PendingUser.deleteOne({ _id: pendingUser._id });
+      return sendResponse(res, 400, false, "Username already in use. Please register again.");
+    }
+
+    const user = await userService.createVerifiedUserWithHashedPassword({
+      username: pendingUser.username,
+      email: pendingUser.email,
+      passwordHash: pendingUser.passwordHash
+    });
+    await PendingUser.deleteOne({ _id: pendingUser._id });
 
     const token = signToken({ id: user._id });
 
@@ -121,24 +153,30 @@ export const verifyEmail = async (req, res) => {
 export const resendCode = async (req, res) => {
   try {
     const { email } = req.body;
-    const user = await userService.findUserByEmail(email);
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    const existingUser = await userService.findUserByEmail(normalizedEmail);
 
-    if (!user) {
-      return sendResponse(res, 404, false, "User not found");
+    if (existingUser?.isVerified) {
+      return sendResponse(res, 400, false, "Email already verified");
     }
 
-    if (user.isVerified) {
-      return sendResponse(res, 400, false, "Email already verified");
+    const pendingUser = await PendingUser.findOne({ email: normalizedEmail });
+    if (!pendingUser) {
+      return sendResponse(res, 404, false, "No pending verification found. Please register again.");
     }
 
     const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
     const verificationCodeExpiresAt = new Date(Date.now() + 2 * 60 * 1000);
 
-    user.verificationCode = verificationCode;
-    user.verificationCodeExpiresAt = verificationCodeExpiresAt;
-    await user.save();
+    pendingUser.verificationCode = verificationCode;
+    pendingUser.verificationCodeExpiresAt = verificationCodeExpiresAt;
+    pendingUser.pendingExpiresAt = new Date(Date.now() + 30 * 60 * 1000);
+    await pendingUser.save();
 
-    await sendVerificationEmail(email, verificationCode);
+    const emailSent = await sendVerificationEmail(normalizedEmail, verificationCode);
+    if (!emailSent) {
+      return sendResponse(res, 500, false, "Failed to resend verification code email");
+    }
 
     return sendResponse(res, 200, true, "Verification code resent");
   } catch (err) {

@@ -66,6 +66,28 @@ export const leaveGroup = async (req, res) => {
   }
 };
 
+export const pinConversation = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { type, targetId, pinned } = req.body;
+    const result = await messageService.setConversationPinStatus({ userId, type, targetId, pinned });
+    return sendResponse(res, 200, true, `Conversation ${result.pinned ? "pinned" : "unpinned"} successfully`, result);
+  } catch (err) {
+    return sendResponse(res, 500, false, err.message);
+  }
+};
+
+export const deleteConversation = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { type, targetId } = req.body;
+    const result = await messageService.deleteConversation({ userId, type, targetId });
+    return sendResponse(res, 200, true, "Conversation deleted successfully", result);
+  } catch (err) {
+    return sendResponse(res, 500, false, err.message);
+  }
+};
+
 export const uploadImage = async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {

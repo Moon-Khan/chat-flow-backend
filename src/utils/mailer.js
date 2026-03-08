@@ -1,55 +1,33 @@
-import nodemailer from 'nodemailer';
-import dotenv from 'dotenv';
-
-dotenv.config();
-
-let transporter;
-let transporterReady = false;
-
-const getTransporter = async () => {
-    if (transporter) return transporter;
-
-    const emailUser = process.env.EMAIL_USER || process.env.SMTP_USER;
-    const emailPass = process.env.EMAIL_PASS || process.env.SMTP_PASS;
-
-    if (!emailUser || !emailPass) {
-        if (process.env.NODE_ENV === "production") {
-            throw new Error("EMAIL_USER and EMAIL_PASS must be set in production");
-        }
-
-        // Development fallback: don't fail local signup if SMTP is not configured.
-        transporter = nodemailer.createTransport({ jsonTransport: true });
-        return transporter;
-    }
-
-    transporter = nodemailer.createTransport({
-        service: "gmail",
-        auth: {
-            user: emailUser,
-            pass: emailPass
-        }
-    });
-
-    if (!transporterReady) {
-        await transporter.verify();
-        transporterReady = true;
-    }
-
-    return transporter;
-};
-
 export const sendVerificationEmail = async (email, code) => {
     if (process.env.NODE_ENV !== "production") {
-        console.log(`Verification code for ${email}: ${code}`);
+        console.log(`[DEV] Verification code for ${email}: ${code}`);
     }
 
-    const fromEmail = process.env.EMAIL_FROM || process.env.EMAIL_USER || "no-reply@chatflow.com";
+    const apiKey = process.env.MAILERSEND_API_KEY;
+    if (!apiKey) {
+        if (process.env.NODE_ENV === "production") {
+            console.error("MAILERSEND_API_KEY is missing in production");
+            return false;
+        }
+
+        // Local development fallback when MailerSend is not configured.
+        return true;
+    }
+
+    const fromEmail = process.env.EMAIL_FROM || "no-reply@example.com";
     const fromName = process.env.EMAIL_FROM_NAME || "ChatFlow Support";
 
-    const mailOptions = {
-        from: `"${fromName}" <${fromEmail}>`,
-        to: email,
-        subject: 'Verify your ChatFlow account',
+    const payload = {
+        from: {
+            email: fromEmail,
+            name: fromName
+        },
+        to: [
+            {
+                email
+            }
+        ],
+        subject: "Verify your ChatFlow account",
         html: `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
                 <h2 style="color: #4F46E5; text-align: center;">Welcome to ChatFlow!</h2>
@@ -66,11 +44,26 @@ export const sendVerificationEmail = async (email, code) => {
     };
 
     try {
-        const mailTransporter = await getTransporter();
-        await mailTransporter.sendMail(mailOptions);
+        const response = await fetch("https://api.mailersend.com/v1/email", {
+            method: "POST",
+            headers: {
+                "accept": "application/json",
+                "Authorization": `Bearer ${apiKey}`,
+                "content-type": "application/json"
+            },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            const errorBody = await response.text();
+            console.error(`MailerSend error: ${response.status} ${errorBody}`);
+            return false;
+        }
+
+        console.log("Email sent via MailerSend");
         return true;
     } catch (error) {
-        console.error("Error sending verification email:", error.message);
+        console.error("Email send failed:", error.message);
         return false;
     }
 };

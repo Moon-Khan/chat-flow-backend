@@ -105,6 +105,7 @@ export const getConversations = async (userId) => {
     {
       $match: {
         chat: { $exists: false },
+        deletedBy: { $ne: userObjectId },
         $or: [{ from: userObjectId }, { to: userObjectId }]
       }
     },
@@ -150,9 +151,31 @@ export const getConversations = async (userId) => {
 
   // 2. Get Group conversations from Chat model
   const groupConversations = await Chat.find({ participants: userObjectId })
-    .populate("lastMessage")
     .populate("participants", "username email avatarUrl about")
     .lean();
+
+  const groupIds = groupConversations.map(group => group._id);
+  const latestVisibleGroupMessages = groupIds.length > 0
+    ? await Message.aggregate([
+      {
+        $match: {
+          chat: { $in: groupIds },
+          deletedBy: { $ne: userObjectId }
+        }
+      },
+      { $sort: { createdAt: -1 } },
+      {
+        $group: {
+          _id: "$chat",
+          lastMessage: { $first: "$$ROOT" }
+        }
+      }
+    ])
+    : [];
+
+  const latestGroupMessageByChatId = new Map(
+    latestVisibleGroupMessages.map(item => [String(item._id), item.lastMessage])
+  );
 
   const formattedGroups = groupConversations.map(group => ({
     type: "group",
@@ -163,10 +186,10 @@ export const getConversations = async (userId) => {
     admin: group.admin,
     createdAt: group.createdAt,
     updatedAt: group.updatedAt,
-    lastMessage: group.lastMessage ? {
-      text: decrypt(group.lastMessage.text),
-      createdAt: group.lastMessage.createdAt,
-      isOwn: String(group.lastMessage.from) === String(userId)
+    lastMessage: latestGroupMessageByChatId.get(String(group._id)) ? {
+      text: decrypt(latestGroupMessageByChatId.get(String(group._id)).text),
+      createdAt: latestGroupMessageByChatId.get(String(group._id)).createdAt,
+      isOwn: String(latestGroupMessageByChatId.get(String(group._id)).from) === String(userId)
     } : null
   }));
 

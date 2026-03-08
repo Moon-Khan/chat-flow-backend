@@ -2,6 +2,10 @@
 
 Express + MongoDB backend for the Chat Flow app, including JWT auth, chat/stories APIs, uploads, and Socket.IO real-time messaging.
 
+## 🌐 Live App
+
+👉 https://chat-flow-frontend-self.vercel.app/
+
 ## Tech Stack
 
 - Node.js + Express

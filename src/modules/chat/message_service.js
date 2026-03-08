@@ -97,6 +97,39 @@ export const createGroupChat = async ({ name, participants, admin }) => {
   return chat;
 };
 
+export const leaveGroupChat = async (chatId, userId) => {
+  const chat = await Chat.findById(chatId);
+  if (!chat) {
+    throw new Error("Group chat not found");
+  }
+
+  const isParticipant = chat.participants.some(
+    (participantId) => String(participantId) === String(userId)
+  );
+
+  if (!isParticipant) {
+    throw new Error("You are not a participant of this group");
+  }
+
+  chat.participants = chat.participants.filter(
+    (participantId) => String(participantId) !== String(userId)
+  );
+
+  // If admin leaves, transfer admin to the first remaining participant.
+  if (String(chat.admin) === String(userId) && chat.participants.length > 0) {
+    chat.admin = chat.participants[0];
+  }
+
+  // Delete empty groups after the last user leaves.
+  if (chat.participants.length === 0) {
+    await Chat.findByIdAndDelete(chatId);
+    return null;
+  }
+
+  await chat.save();
+  return chat;
+};
+
 export const getConversations = async (userId) => {
   const userObjectId = new mongoose.Types.ObjectId(String(userId));
 
@@ -245,6 +278,7 @@ const messageService = {
   getMessagesForChat,
   getMessagesBetweenUsers,
   createGroupChat,
+  leaveGroupChat,
   getConversations,
   deleteMessage
 };

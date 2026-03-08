@@ -13,6 +13,7 @@ export const createUser = async ({ username, email, password }) => {
 
 export const findUserByEmail = (email) => User.findOne({ email });
 export const findUserById = (id) => User.findById(id);
+export const hashPassword = (password) => bcrypt.hash(password, SALT_ROUNDS);
 export const comparePassword = (plain, hashed) => bcrypt.compare(plain, hashed);
 
 export const getAllUsers = (excludeId) => {
@@ -22,6 +23,10 @@ export const getAllUsers = (excludeId) => {
 
 export const updateUserProfile = (userId, updates) => {
   return User.findByIdAndUpdate(userId, updates, { new: true, select: "-password" });
+};
+
+export const deleteUserById = (userId) => {
+  return User.findByIdAndDelete(userId);
 };
 
 const userService = {

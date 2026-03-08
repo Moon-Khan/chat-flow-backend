@@ -6,6 +6,9 @@ const userSchema = new mongoose.Schema({
   password: { type: String, required: true }, // hashed
   avatarUrl: { type: String },
   about: { type: String, default: "" },
+  isVerified: { type: Boolean, default: false },
+  verificationCode: { type: String },
+  verificationCodeExpiresAt: { type: Date },
   storyPrivacy: { type: String, enum: ['everyone', 'selected'], default: 'everyone' },
   storyAllowedUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
   statusPrivacy: { type: String, enum: ['everyone', 'selected', 'nobody'], default: 'everyone' },
